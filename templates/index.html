@@ -7,6 +7,20 @@
 </head>
 <body>
 
+<h2>Submit Data</h2>
+<label for="dataDate">Date:</label>
+<input type="date" id="dataDate" name="dataDate">
+
+<label for="dataPrice">Price:</label>
+<input type="text" id="dataPrice" name="dataPrice">
+
+<button id="submitButton">Submit Data</button>
+
+
+<h2>Make Prediction</h2>
+<label for="bucket">Bucket:</label>
+<input type="text" id="bucket" name="bucket">
+
 <label for="measurement">Measurement:</label>
 <input type="text" id="measurement" name="measurement">
 
@@ -19,11 +33,28 @@
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 <script>
     $(document).ready(function(){
+        $("#submitButton").click(function() {
+            var date = $('#dataDate').val();
+            var price = $('#dataPrice').val();
+            $.ajax({
+                url: '/data?date=' + date + '&price=' + price,
+                type: 'GET',
+                success: function(response) {
+                    alert("Data submitted successfully.");
+                },
+                error: function(error) {
+                    console.log(error);
+                    alert("Error submitting data.");
+                }
+            });
+        });
+
         $("#predictButton").click(function(){
+            var bucket = $('#bucket').val();
             var measurement = $('#measurement').val();
             var field = $('#field').val();
             $.ajax({
-                url: '/predict?measurement=' + measurement + '&field=' + field,
+                url: '/predict?bucket=' + bucket + '&measurement=' + measurement + '&field=' + field,
                 type: 'GET',
                 success: function(response) {
                     // Convert the response object to a JSON-formatted string with indentation for readability

@@ -1,17 +1,22 @@
 from flask import Flask, render_template, request, jsonify
-import influxdb_client, os, time
+from datetime import datetime
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 from prophet import Prophet
-import pandas as pd
+from prophet.serialize import model_to_json, model_from_json
+# import pandas as pd
 
 app = Flask(__name__)
 
-token = "UNVypEIb7GeCNRuz2wwzIHynU8b0gTrrrb73KIdf5FGr0r2gO7i1gfYm5x3wzuo4rOgbOJ-zyKovI4VLSWMr3Q=="
+read_token = "HNoaSVzwr5gBp3mlDK9Ub2rL5nW6x9IFq-HHk-aoBAeWMFnf7ALKD-HFJfNDmSJH82FkwgOKebXmsIb5m3Bwaw=="
+write_token = "gGYzDRoC3H6VFBUixewHxW8qXXajUa7xCW0eRO6ENxlymkBMZWgBOWbk06ZdRT97aCYjI32-K7KTERNIbtWIxQ=="
 org = "Gas-pump"
 url = "http://localhost:8086"
 
-client = influxdb_client.InfluxDBClient(url=url, token=token, org=org)
+read_client = InfluxDBClient(url=url, token=read_token, org=org)
+write_client = InfluxDBClient(url=url, token=write_token, org=org)
+write_api = write_client.write_api(write_options=SYNCHRONOUS)
+
 
 @app.route('/')
 def home():
@@ -22,6 +27,7 @@ def home():
 @app.route('/predict')
 def predict():
 
+	bucket = request.args.get('bucket')
 	measurement = request.args.get('measurement')
 	field = request.args.get('field')
 
@@ -30,18 +36,17 @@ def predict():
 
 	# Construct the Flux query
 	query = f'''
-	from(bucket: "{"Gas-Prices"}")
+	from(bucket: "{bucket}")
 		|> range(start: 0)
 		|> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "{field}")
+		|> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
 	'''
-	#"Prices" and r._field == "y"
 
 	# Query InfluxDB
-	result = client.query_api().query_data_frame(query=query, org=org)
+	result = read_client.query_api().query_data_frame(query=query, org=org)
 	if result.empty:
 		return jsonify({'error': 'No data found for the specified date range'}), 404
 
-	print(result)
 	# Prepare DataFrame for Prophet
 	df = result.rename(columns={"_time": "ds", "_value": "y"})
 
@@ -60,6 +65,26 @@ def predict():
 	predictions_list = predictions.to_dict('records')
 
 	return jsonify({'predictions': predictions_list})
+
+
+@app.route('/data')
+def data():
+
+	date = request.args.get("date")
+	price = request.args.get("price")
+
+	if not date or not price:
+		return jsonify({"error": "Date and price parameters are required."}), 400
+
+	# date_str = date  # Example date string
+	date_obj = datetime.strptime(date, '%Y-%m-%d')
+	point = Point("Prices")\
+		.field("y", float(price))\
+		.time(date_obj, WritePrecision.NS)
+
+	write_api.write(bucket="Gas-Prices", org=org, record=point)
+	
+	return jsonify({"message": "Data submitted successfully"}), 200
 
 if __name__ == '__main__':
 	app.run(debug=True)

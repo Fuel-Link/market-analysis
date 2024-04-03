@@ -4,7 +4,7 @@ import pandas as pd
 import os
 from datetime import datetime
 
-itoken = "UNVypEIb7GeCNRuz2wwzIHynU8b0gTrrrb73KIdf5FGr0r2gO7i1gfYm5x3wzuo4rOgbOJ-zyKovI4VLSWMr3Q=="
+itoken = "gGYzDRoC3H6VFBUixewHxW8qXXajUa7xCW0eRO6ENxlymkBMZWgBOWbk06ZdRT97aCYjI32-K7KTERNIbtWIxQ=="
 org = "Gas-pump"
 url = "http://localhost:8086"
 
@@ -13,7 +13,7 @@ client = InfluxDBClient(url=url, token=itoken, org=org)
 write_api = client.write_api(write_options=SYNCHRONOUS)
 
 # Read your CSV data
-df = pd.read_csv('Postos.csv')
+df = pd.read_csv('update.csv')
 
 # Convert DataFrame to a list of InfluxDB Point objects
 points = []
@@ -29,18 +29,21 @@ write_api.write(bucket="Gas-Prices", org=org, record=points)
 
 print(points)
 
-query_api = client.query_api()
 
-query = """from(bucket: "Gas-Prices")
- |> range(start: -1y)
- |> filter(fn: (r) => r._measurement == "Prices")"""
-tables = query_api.query(query, org="Gas-pump")
 
-print(tables)
 
-for table in tables:
-  for record in table.records:
-    print(record)
+# query_api = client.query_api()
+
+# query = """from(bucket: "Gas-Prices")
+#  |> range(start: -1y)
+#  |> filter(fn: (r) => r._measurement == "Prices")"""
+# tables = query_api.query(query, org="Gas-pump")
+
+# print(tables)
+
+# for table in tables:
+#   for record in table.records:
+#     print(record)
 
 
 
