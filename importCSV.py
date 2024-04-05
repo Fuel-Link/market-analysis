@@ -4,8 +4,8 @@ import pandas as pd
 import os
 from datetime import datetime
 
-itoken = "gGYzDRoC3H6VFBUixewHxW8qXXajUa7xCW0eRO6ENxlymkBMZWgBOWbk06ZdRT97aCYjI32-K7KTERNIbtWIxQ=="
-org = "Gas-pump"
+itoken = "a5bQCggAVLZqTrvecX4eL1KjpKZ8q_u_9GTehMJiD2MbDQXpSbvMIS4SoCYzkbpic9N9cSRjc5o-31dQBMg55g=="
+org = "FuelLink"
 url = "http://localhost:8086"
 
 # Initialize the InfluxDB client
@@ -13,13 +13,11 @@ client = InfluxDBClient(url=url, token=itoken, org=org)
 write_api = client.write_api(write_options=SYNCHRONOUS)
 
 # Read your CSV data
-df = pd.read_csv('update.csv')
+df = pd.read_csv('Postos.csv')
 
 # Convert DataFrame to a list of InfluxDB Point objects
 points = []
 for index, row in df.iterrows():
-    date_str = row['ds']  # Example date string
-    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
     point = Point("Prices")\
         .field("y", float(row['y']))\
         .time(row['ds'], WritePrecision.NS)

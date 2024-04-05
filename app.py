@@ -4,13 +4,14 @@ from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 from prophet import Prophet
 from prophet.serialize import model_to_json, model_from_json
+from datetime import datetime, timedelta, timezone
 # import pandas as pd
 
 app = Flask(__name__)
 
-read_token = "HNoaSVzwr5gBp3mlDK9Ub2rL5nW6x9IFq-HHk-aoBAeWMFnf7ALKD-HFJfNDmSJH82FkwgOKebXmsIb5m3Bwaw=="
-write_token = "gGYzDRoC3H6VFBUixewHxW8qXXajUa7xCW0eRO6ENxlymkBMZWgBOWbk06ZdRT97aCYjI32-K7KTERNIbtWIxQ=="
-org = "Gas-pump"
+read_token = "hm-Il0Rq9lXQhmKR4-gnXTgjHiaJ92Qv8fZ2b3ga1DBP5gqf7f3V6DHsOYvpW_afnaCEmwbMefMCOZQV49y8Gw=="
+write_token = "hm-Il0Rq9lXQhmKR4-gnXTgjHiaJ92Qv8fZ2b3ga1DBP5gqf7f3V6DHsOYvpW_afnaCEmwbMefMCOZQV49y8Gw=="
+org = "FuelLink"
 url = "http://localhost:8086"
 
 read_client = InfluxDBClient(url=url, token=read_token, org=org)
@@ -63,6 +64,35 @@ def predict():
 
 	predictions = forecast[['ds', 'yhat']].tail(15)
 	predictions_list = predictions.to_dict('records')
+
+	for prediction in predictions_list:
+		print(prediction)
+		# Parse the date and value
+		date = prediction['ds']
+		yhat = prediction['yhat']
+
+		# Create a Point
+		point = Point("Predictions")\
+			.field("yhat", yhat)\
+			.time(date, WritePrecision.NS)
+
+		write_api.write(bucket='Predictions', org=org, record=point)
+
+	query = '''
+			from(bucket: "Predictions")
+			|> range(start: now(), stop: 15d)
+			|> filter(fn: (r) => r["_measurement"] == "Predictions")
+			|> filter(fn: (r) => r["_field"] == "yhat")
+			'''
+	
+	result = read_client.query_api().query(org=org, query=query)
+
+	# Process the results
+	for table in result:
+		for record in table.records:
+			print(f'Time: {record.get_time()}, Predicted Value: {record.get_value()}')
+
+
 
 	return jsonify({'predictions': predictions_list})
 
