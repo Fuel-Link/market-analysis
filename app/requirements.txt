@@ -1,0 +1,4 @@
+prophet==1.1.5
+flask==3.0.2
+influxdb-client==1.41.0
+pandas==2.2.1

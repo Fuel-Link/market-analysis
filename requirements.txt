@@ -1,5 +1,0 @@
-prophet
-pandas
-plotly
-flask
-influxdb-client
