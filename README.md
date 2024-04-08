@@ -26,4 +26,5 @@ this will query the db and calculate prediction values for the next 15 days, tho
     ]
 }
 ```
-Currently is the bucket that is select does not currently exist, it will create it and load it with data from a .csv file, also there is an example on how to use this in the home directory of this service
+Currently if the bucket that is select does not currently exist, it will be created and loaded with data from a .csv file. 
+Also there is an example on how to use this in the home directory of this service
