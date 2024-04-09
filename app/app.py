@@ -66,7 +66,7 @@ def predict():
 		return jsonify({'error': 'No data found for the specified date range'}), 404
 
 	# Prepare DataFrame for Prophet
-	df = result.rename(columns={"_time": "ds", "_value": "y"})
+	df = result.rename(columns={"_time": "ds", field: "y"})
 
 	df['ds'] = df['ds'].dt.tz_localize(None)
 
