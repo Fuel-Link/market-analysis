@@ -6,7 +6,14 @@ To start the service run
 docker compose up -d
 ```
 
-Currently access to influxdb is defined through the enviroment variables in docker-compose, if those change in the influxdb service they need to change here too.
+Currently access to influxdb is defined through the enviroment variables in docker-compose, if those change in the influxdb service they need to change here too. If the influxdb is not running in docker then the INFLUXDB_URL needs to be changed from 
+```
+localhost:8086
+``` 
+to 
+```
+host.docker.internal:8086
+```
 
 Predictions are calculated by calling /predict with a bucket, measurement and field like this:
 
