@@ -5,8 +5,13 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from prophet import Prophet
 import pandas as pd
 import os
+import json
 
 app = Flask(__name__)
+
+INFLUXDB_URL = os.getenv('INFLUXDB_URL')
+INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN')
+INFLUXDB_ORG = os.getenv('INFLUXDB_ORG')
 
 Users = {}	
 
@@ -15,6 +20,69 @@ def home():
 	# Render an HTML page with a button
 	return render_template('index.html')
 
+@app.route('/old/predict', methods=["GET"])
+def OldPredict():
+	
+	read_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG, timeout=60000)
+
+	bucket = request.args.get('bucket')
+	measurement = request.args.get('measurement')
+	field = request.args.get('field')
+	
+	if not measurement or not field:
+		return jsonify({'error': 'Measurement and field parameters are required'}), 400
+
+	# If bucket does not exist, imports the Postos.csv into the database to run the model
+	buckets_api = read_client.buckets_api()
+	if not buckets_api.find_bucket_by_name(bucket):
+		buckets_api.create_bucket(bucket_name=bucket, org=INFLUXDB_ORG)
+		write_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG, timeout=60000)
+		write_api = write_client.write_api(write_options=SYNCHRONOUS)
+
+		df = pd.read_csv('Postos.csv')
+
+		points = []
+		for index, row in df.iterrows():
+			point = Point(measurement)\
+				.field(field, float(row['y']))\
+				.time(row['ds'], WritePrecision.NS)
+			points.append(point)
+
+		write_api.write(bucket=bucket, org=INFLUXDB_ORG, record=points)
+		write_client.close()
+
+	# Construct the Flux query
+	query = f'''
+	from(bucket: "{bucket}")
+		|> range(start: 0)
+		|> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "{field}")
+		|> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+	'''
+
+	# Query InfluxDB
+	result = read_client.query_api().query_data_frame(query=query, org=INFLUXDB_ORG)
+	if result.empty:
+		return jsonify({'error': 'No data found for the specified date range'}), 404
+
+	# Prepare DataFrame for Prophet
+	df = result.rename(columns={"_time": "ds", field: "y"})
+
+	df['ds'] = df['ds'].dt.tz_localize(None)
+
+	m = Prophet()
+	m.fit(df)
+
+	future = m.make_future_dataframe(periods=15)
+	future.tail()
+
+	forecast = m.predict(future)
+
+
+	predictions = forecast[['ds', 'yhat']].tail(15)
+	predictions_list = predictions.to_dict('records')
+
+	read_client.close()
+	return jsonify({'predictions': predictions_list})
 
 @app.route('/predict', methods=["GET"])
 def predict():
@@ -75,7 +143,10 @@ def predict():
 	# Prepare DataFrame for Prophet
 	df = result.rename(columns={"_time": "ds", field: "y"})
 
-	df['ds'] = df['ds'].dt.tz_localize(None)
+	df['ds'] = df['ds'].dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
+
+	actual_values = df[['ds', 'y']].tail(int(days)).to_json(orient='records', date_format='iso')
+	actual_values = json.loads(actual_values)
 
 	m = Prophet()
 	m.fit(df)
@@ -90,10 +161,10 @@ def predict():
 	predictions_list = predictions.to_dict('records')
 
 	read_client.close()
-	return jsonify({'predictions': predictions_list})
+	return jsonify({'predictions': predictions_list, 'real':actual_values})
 
 
-@app.route('/addClient', methods=['GET'])
+@app.route('/addClient', methods=['POST'])
 def addClient():
 	org = request.args.get("org")
 	url = request.args.get("url")
@@ -110,7 +181,7 @@ def addClient():
 	return jsonify({"message": "User added successfully"}), 200
 
 
-@app.route('/updateClient', methods=['GET'])
+@app.route('/updateClient', methods=['PUT'])
 def updateClient():
 	org = request.args.get("org")
 	url = request.args.get("url")
@@ -136,29 +207,60 @@ def updateClient():
 	return jsonify({"message": "User updated successfully"}), 200
 
 	
+@app.route('/updateData', methods=['PUT'])
+def updateData():
 
-# @app.route('/data')
-# def data():
+	org = request.args.get('org')
+	token = request.args.get('token')
 
-# 	write_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
-# 	write_api = write_client.write_api(write_options=SYNCHRONOUS)
-
-# 	date = request.args.get("date")
-# 	price = request.args.get("price")
-
-# 	if not date or not price:
-# 		return jsonify({"error": "Date and price parameters are required."}), 400
-
-# 	# date_str = date  # Example date string
-# 	date_obj = datetime.strptime(date, '%Y-%m-%d')
-# 	point = Point("Prices")\
-# 		.field("y", float(price))\
-# 		.time(date_obj, WritePrecision.NS)
-
-# 	write_api.write(bucket="Gas-Prices", org=INFLUXDB_ORG, record=point)
-# 	write_client.close()
+	if not org or not token:
+		return jsonify({'error': 'org and token parameters are required'}), 400
 	
-# 	return jsonify({"message": "Data submitted successfully"}), 200
+	if not Users.get(org):
+		return jsonify({'error': 'organization not found'}), 404
+	
+	url= Users[org]["url"]
+	bucket = Users[org]["bucket"]
+	measurement = Users[org]["measurement"]
+	field = Users[org]["field"]
+
+	client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
+
+
+	query_api = client.query_api()
+
+	# Flux query to fetch the last timestamp from the specified measurement
+	query =f'''
+			from(bucket: "{bucket}")
+				|> range(start: -1y)
+				|> filter(fn: (r) => r._measurement == "{measurement}")
+				|> last()
+				|> keep(columns: ["_time"])
+			'''
+	result = query_api.query(org=org, query=query)
+	for table in result:
+			for record in table.records:
+				datetime_obj = record.get_time()
+				date_obj = datetime_obj.date() if datetime_obj else None
+
+	write_api = client.write_api(write_options=SYNCHRONOUS)
+
+	df = pd.read_csv('Postos.csv')
+
+	points = []
+	for index, row in df.iterrows():
+		date = datetime.strptime(row['ds'], '%Y-%m-%d').date()
+		if(date_obj < date):
+			print(date)
+			point = Point(measurement)\
+				.field(field, float(row['y']))\
+				.time(row['ds'], WritePrecision.NS)
+			points.append(point)
+
+	write_api.write(bucket=bucket, org=org, record=points)
+	client.close()
+
+	return jsonify({"message": "result"}), 200
 
 if __name__ == '__main__':
 	app.run(debug=True)
