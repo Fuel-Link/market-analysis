@@ -13,5 +13,6 @@ services:
       - INFLUXDB_URL=http://localhost:8086
       - INFLUXDB_TOKEN=PLHVTO5-hxRlXKPPOVhwmt2BMH21knPYk5jhxS5aBmFQosilbYVD-DAmmVNkAswMWu-NTlu-uQ3gmIUrhGemtQ==
       - INFLUXDB_ORG=FuelLink
+      - PYTHONUNBUFFERED=1 
     volumes:
       - ./app:/app
