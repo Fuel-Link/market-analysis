@@ -54,7 +54,7 @@ this will query the db and calculate prediction values for the next days, those 
     ]
 }
 ```
-Currently if the bucket that is select does not currently exist, it will be created and loaded with data from a .csv file.
+Currently if the bucket that is select does not currently exist, it will be created and loaded with data by calling internally updateData.
 
 
 
@@ -68,10 +68,7 @@ like this:
 localhost:5000/updateData?org=orgName&token=your_token_here
 ```
 
-This is currently still using the csv to update the db, in the future it will use a web scraper to fetch the data.
-
-
- 
+This is will use the API https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD, to fetch fuel prices.
 
 
 Old method of calling predictions:

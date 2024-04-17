@@ -1,11 +1,12 @@
-from flask import Flask, render_template, request, jsonify
-from datetime import datetime
-from influxdb_client import InfluxDBClient, Point, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS
-from prophet import Prophet
-import pandas as pd
 import os
 import json
+import requests
+import pandas as pd
+from prophet import Prophet
+from datetime import datetime
+from influxdb_client.client.write_api import SYNCHRONOUS
+from flask import Flask, render_template, request, jsonify
+from influxdb_client import InfluxDBClient, Point, WritePrecision
 
 app = Flask(__name__)
 
@@ -108,24 +109,10 @@ def predict():
 	
 	
 
-	# If bucket does not exist, imports the Postos.csv into the database to run the model
+	# If bucket does not exist, use the internal updateData function to create the bucket with all data
 	buckets_api = read_client.buckets_api()
 	if not buckets_api.find_bucket_by_name(bucket):
-		buckets_api.create_bucket(bucket_name=bucket, org=org)
-		write_client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
-		write_api = write_client.write_api(write_options=SYNCHRONOUS)
-
-		df = pd.read_csv('Postos.csv')
-
-		points = []
-		for index, row in df.iterrows():
-			point = Point(measurement)\
-				.field(field, float(row['y']))\
-				.time(row['ds'], WritePrecision.NS)
-			points.append(point)
-
-		write_api.write(bucket=bucket, org=org, record=points)
-		write_client.close()
+		updateData(org,token)
 
 	# Construct the Flux query
 	query = f'''
@@ -226,6 +213,9 @@ def updateData():
 
 	client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
 
+	buckets_api = client.buckets_api()
+	if not buckets_api.find_bucket_by_name(bucket):
+		buckets_api.create_bucket(bucket_name=bucket, org=org)
 
 	query_api = client.query_api()
 
@@ -237,30 +227,106 @@ def updateData():
 				|> last()
 				|> keep(columns: ["_time"])
 			'''
+	
+	date_obj = None	
 	result = query_api.query(org=org, query=query)
 	for table in result:
 			for record in table.records:
 				datetime_obj = record.get_time()
-				date_obj = datetime_obj.date() if datetime_obj else None
+				if datetime_obj:
+					date_obj = datetime_obj.date()
+
+	if not date_obj:
+		date_obj = datetime(2017,1,1).date()
+
+	URL = "https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD"
+
+	dataIni = date_obj.strftime('%Y-%m-%d')
+	dataFim = datetime.today().date()
+	nDias = date_obj - dataFim
+
+	PARAMS = {'idsTiposComb':'3201', 'dataIni':dataIni, 'dataFim':dataFim,'qtdPorPagina':nDias,'pagina':'1', 'orderAsc':'1'}
+	
+	page = requests.get(url=URL,params=PARAMS)
+
+	results = page.json()
 
 	write_api = client.write_api(write_options=SYNCHRONOUS)
-
-	df = pd.read_csv('Postos.csv')
-
 	points = []
-	for index, row in df.iterrows():
-		date = datetime.strptime(row['ds'], '%Y-%m-%d').date()
-		if(date_obj < date):
-			print(date)
-			point = Point(measurement)\
-				.field(field, float(row['y']))\
-				.time(row['ds'], WritePrecision.NS)
-			points.append(point)
+	for dia in results['resultado']:
+		number = float(dia['PrecoMedio'][:-2].replace(',', '.'))
+		point = Point(measurement)\
+			.field(field, number)\
+			.time(dia['Data'], WritePrecision.NS)
+		points.append(point)
 
 	write_api.write(bucket=bucket, org=org, record=points)
 	client.close()
 
 	return jsonify({"message": "result"}), 200
+
+
+
+# internal function
+def updateData(org,token):
+
+	url= Users[org]["url"]
+	bucket = Users[org]["bucket"]
+	measurement = Users[org]["measurement"]
+	field = Users[org]["field"]
+
+	client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
+
+	buckets_api = client.buckets_api()
+	if not buckets_api.find_bucket_by_name(bucket):
+		buckets_api.create_bucket(bucket_name=bucket, org=org)
+
+	query_api = client.query_api()
+
+	# Flux query to fetch the last timestamp from the specified measurement
+	query =f'''
+			from(bucket: "{bucket}")
+				|> range(start: -1y)
+				|> filter(fn: (r) => r._measurement == "{measurement}")
+				|> last()
+				|> keep(columns: ["_time"])
+			'''
+	
+	date_obj = None	
+	result = query_api.query(org=org, query=query)
+	for table in result:
+			for record in table.records:
+				datetime_obj = record.get_time()
+				if datetime_obj:
+					date_obj = datetime_obj.date()
+
+	if not date_obj:
+		date_obj = datetime(2017,1,1).date()
+
+	URL = "https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD"
+
+	dataIni = date_obj.strftime('%Y-%m-%d')
+	dataFim = datetime.today().date()
+	nDias = date_obj - dataFim
+
+	PARAMS = {'idsTiposComb':'3201', 'dataIni':dataIni, 'dataFim':dataFim,'qtdPorPagina':nDias,'pagina':'1', 'orderAsc':'1'}
+	
+	page = requests.get(url=URL,params=PARAMS)
+
+	results = page.json()
+
+	write_api = client.write_api(write_options=SYNCHRONOUS)
+	points = []
+	for dia in results['resultado']:
+		number = float(dia['PrecoMedio'][:-2].replace(',', '.'))
+		point = Point(measurement)\
+			.field(field, number)\
+			.time(dia['Data'], WritePrecision.NS)
+		points.append(point)
+
+	write_api.write(bucket=bucket, org=org, record=points)
+	client.close()
+
 
 if __name__ == '__main__':
 	app.run(debug=True)
