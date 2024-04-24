@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import binascii
 import pandas as pd
 from prophet import Prophet
 from datetime import datetime
@@ -89,16 +90,18 @@ def OldPredict():
 def predict():
 	
 	org = request.args.get('org')
+	authToken = request.args.get("authToken")
 	token = request.args.get('token')
 	days = request.args.get('days',default=15)
 
 	if not org or not token:
 		return jsonify({'error': 'org and token parameters are required'}), 400
 	
-	print(Users.get(org))
-	
 	if not Users.get(org):
 		return jsonify({'error': 'organization not found'}), 404
+	
+	if Users[org]['authToken'] is not authToken:
+		return jsonify({'error': 'authentication failed'}), 403
 	
 	url= Users[org]["url"]
 	bucket = Users[org]["bucket"]
@@ -162,25 +165,30 @@ def addClient():
 	if not url or not org or not bucket or not measurement or not field:
 		return jsonify({"error": "url, org, bucket, measurement and field parameters are required."}), 400
 
-	newUser = {"url": url, "bucket": bucket, "measurement": measurement, "field": field}
+	authToken = binascii.hexlify(os.urandom(20)).decode()
+	newUser = {"url": url, "bucket": bucket, "measurement": measurement, "field": field, "authToken": authToken}
 	Users[org] = newUser
 
-	return jsonify({"message": "User added successfully"}), 200
+	return jsonify({"message": "User added successfully", "authToken":authToken}), 200
 
 
 @app.route('/updateClient', methods=['PUT'])
 def updateClient():
 	org = request.args.get("org")
+	authToken = request.args.get("authToken")
 	url = request.args.get("url")
 	bucket = request.args.get("bucket")
 	measurement = request.args.get("measurement")
 	field = request.args.get("field")
 
-	if not org:
-		return jsonify({"error": "org parameter is required."}), 400
+	if not org or not authToken:
+		return jsonify({"error": "org and authToken parameters are required."}), 400
 	
 	if not Users.get(org):
 		return jsonify({'error': 'organization not found'}), 404
+	
+	if Users[org]['authToken'] is not authToken:
+		return jsonify({'error': 'authentication failed'}), 403
 	
 	if url:
 		Users[org]['url'] = url
@@ -198,13 +206,17 @@ def updateClient():
 def updateData():
 
 	org = request.args.get('org')
+	authToken = request.args.get("authToken")
 	token = request.args.get('token')
 
-	if not org or not token:
-		return jsonify({'error': 'org and token parameters are required'}), 400
+	if not org or not token or not authToken:
+		return jsonify({'error': 'org, token and authToken parameters are required'}), 400
 	
 	if not Users.get(org):
 		return jsonify({'error': 'organization not found'}), 404
+	
+	if Users[org]['authToken'] is not authToken:
+		return jsonify({'error': 'authentication failed'}), 403
 	
 	url= Users[org]["url"]
 	bucket = Users[org]["bucket"]

@@ -18,22 +18,24 @@ like this:
 ```bash
 http://localhost:5000/addClient?org=OrgName&url=Url&bucket=bucket&measurement=measurement&field=field
 ```
-these fields can be updated later with /updateClient, using the organization name and all other parameters are optional
+
+this will return a authentication token that is required for any other operation, these fields can be updated later with /updateClient, using the organization name and the authentication token, all other parameters are optional
 
 ```bash
-http://localhost:5000/updateClient?org=OrgName
+http://localhost:5000/updateClient?org=OrgName&authToken=authToken
 ```
 
 
 Predictions are calculated by calling /predict with a 
 - organization name, 
+- authToken, 
 - token,
--  optionally a number os days(default 15) 
+- optionally a number os days(default 15) 
 
 like this:
 
 ```bash
-localhost:5000/predict?org=orgName&token=your_token_here&days=7
+localhost:5000/predict?org=orgName&authToken=authToken&token=your_token_here&days=7
 ```
 
 this will query the db and calculate prediction values for the next days, those are returned like this aswell as the real values in the db:
@@ -60,12 +62,13 @@ Currently if the bucket that is select does not currently exist, it will be crea
 
 The database can be updated by calling /updateData with the 
 - organization name,
+- authToken
 - token,
   
 like this:
 
 ```bash
-localhost:5000/updateData?org=orgName&token=your_token_here
+localhost:5000/updateData?org=orgName&authToken=authToken&token=your_token_here
 ```
 
 This is will use the API https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD, to fetch fuel prices.
