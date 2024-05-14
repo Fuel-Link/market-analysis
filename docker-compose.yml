@@ -9,10 +9,22 @@ services:
       - "5000:5000"
     environment:
       - FLASK_APP=app.py
-      - FLASK_RUN_HOST=0.0.0.0
-      - INFLUXDB_URL=http://localhost:8086
-      - INFLUXDB_TOKEN=PLHVTO5-hxRlXKPPOVhwmt2BMH21knPYk5jhxS5aBmFQosilbYVD-DAmmVNkAswMWu-NTlu-uQ3gmIUrhGemtQ==
-      - INFLUXDB_ORG=FuelLink
-      - PYTHONUNBUFFERED=1 
+      - FLASK_RUN_HOST=0.0.0.0 
     volumes:
       - ./app:/app
+      - ./app/data:/app/data
+
+  influxdb:
+    image: influxdb:latest
+    ports:
+      - "8086:8086"
+    environment:
+      - INFLUXDB_DB=mydb
+      - INFLUXDB_ADMIN_USER=admin
+      - INFLUXDB_ADMIN_PASSWORD=admin123
+      - INFLUXDB_HTTP_AUTH_ENABLED=true
+    volumes:
+      - influxdb-storage:/var/lib/influxdb
+
+volumes:
+  influxdb-storage:

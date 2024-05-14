@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 import requests
 import binascii
 import pandas as pd
@@ -11,80 +12,25 @@ from influxdb_client import InfluxDBClient, Point, WritePrecision
 
 app = Flask(__name__)
 
-INFLUXDB_URL = os.getenv('INFLUXDB_URL')
-INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN')
-INFLUXDB_ORG = os.getenv('INFLUXDB_ORG')
+DATABASE = '/app/data/orgs.db'
 
-Users = {}	
+def get_db():
+    conn = sqlite3.connect(DATABASE)
+    return conn
 
-@app.route('/')
-def home():
-	# Render an HTML page with a button
-	return render_template('index.html')
-
-@app.route('/old/predict', methods=["GET"])
-def OldPredict():
-	
-	read_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG, timeout=60000)
-
-	bucket = request.args.get('bucket')
-	measurement = request.args.get('measurement')
-	field = request.args.get('field')
-	
-	if not measurement or not field:
-		return jsonify({'error': 'Measurement and field parameters are required'}), 400
-
-	# If bucket does not exist, imports the Postos.csv into the database to run the model
-	buckets_api = read_client.buckets_api()
-	if not buckets_api.find_bucket_by_name(bucket):
-		buckets_api.create_bucket(bucket_name=bucket, org=INFLUXDB_ORG)
-		write_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG, timeout=60000)
-		write_api = write_client.write_api(write_options=SYNCHRONOUS)
-
-		df = pd.read_csv('Postos.csv')
-
-		points = []
-		for index, row in df.iterrows():
-			point = Point(measurement)\
-				.field(field, float(row['y']))\
-				.time(row['ds'], WritePrecision.NS)
-			points.append(point)
-
-		write_api.write(bucket=bucket, org=INFLUXDB_ORG, record=points)
-		write_client.close()
-
-	# Construct the Flux query
-	query = f'''
-	from(bucket: "{bucket}")
-		|> range(start: 0)
-		|> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "{field}")
-		|> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-	'''
-
-	# Query InfluxDB
-	result = read_client.query_api().query_data_frame(query=query, org=INFLUXDB_ORG)
-	if result.empty:
-		return jsonify({'error': 'No data found for the specified date range'}), 404
-
-	# Prepare DataFrame for Prophet
-	df = result.rename(columns={"_time": "ds", field: "y"})
-
-	df['ds'] = df['ds'].dt.tz_localize(None)
-
-	m = Prophet()
-	m.fit(df)
-
-	future = m.make_future_dataframe(periods=15)
-	future.tail()
-
-	forecast = m.predict(future)
-
-
-	predictions = forecast[['ds', 'yhat']].tail(15)
-	predictions_list = predictions.to_dict('records')
-
-	read_client.close()
-	return jsonify({'predictions': predictions_list})
+def create_table():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS orgs (
+                        org TEXT PRIMARY KEY,
+                        url TEXT NOT NULL,
+                        bucket TEXT NOT NULL,
+                        measurement TEXT NOT NULL,
+                        field TEXT NOT NULL,
+                        authToken TEXT UNIQUE NOT NULL
+                    )''')
+    conn.commit()
+    conn.close()
 
 @app.route('/predict', methods=["GET"])
 def predict():
@@ -94,64 +40,68 @@ def predict():
 	token = request.args.get('token')
 	days = request.args.get('days',default=15)
 
-	if not org or not token:
-		return jsonify({'error': 'org and token parameters are required'}), 400
+	if not org or not token or not authToken:
+		return jsonify({'error': 'org, token and authToken parameters are required'}), 400
 	
-	if not Users.get(org):
-		return jsonify({'error': 'organization not found'}), 404
+	conn = get_db()
+	cursor = conn.cursor()
+
+	cursor.execute('SELECT * FROM orgs WHERE org = ? AND authToken = ?', (org, authToken))
+	client = cursor.fetchone()
+
+	if client is None:
+		return jsonify({'error': 'organization not found or authentication failed'}), 404
 	
-	if Users[org]['authToken'] is not authToken:
-		return jsonify({'error': 'authentication failed'}), 403
-	
-	url= Users[org]["url"]
-	bucket = Users[org]["bucket"]
-	measurement = Users[org]["measurement"]
-	field = Users[org]["field"]
+	url = client[1]
+	bucket = client[2]
+	measurement = client[3]
+	field = client[4]
 
-	read_client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
-	
-	
+	try:
+		read_client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
+		buckets_api = read_client.buckets_api()
 
-	# If bucket does not exist, use the internal updateData function to create the bucket with all data
-	buckets_api = read_client.buckets_api()
-	if not buckets_api.find_bucket_by_name(bucket):
-		updateData(org,token)
+		if not buckets_api.find_bucket_by_name(bucket):
+			# Call the updateData function if bucket does not exist
+			updateData(org, token, url, bucket, measurement, field)
 
-	# Construct the Flux query
-	query = f'''
-	from(bucket: "{bucket}")
-		|> range(start: 0)
-		|> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "{field}")
-		|> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-	'''
+		# Construct the Flux query
+		query = f'''
+		from(bucket: "{bucket}")
+			|> range(start: 0)
+			|> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "{field}")
+			|> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+		'''
 
-	# Query InfluxDB
-	result = read_client.query_api().query_data_frame(query=query, org=org)
-	if result.empty:
-		return jsonify({'error': 'No data found for the specified date range'}), 404
+		# Query InfluxDB
+		result = read_client.query_api().query_data_frame(query=query, org=org)
+		if result.empty:
+			return jsonify({'error': 'No data found for the specified date range'}), 404
 
-	# Prepare DataFrame for Prophet
-	df = result.rename(columns={"_time": "ds", field: "y"})
+		# Prepare DataFrame for Prophet
+		df = result.rename(columns={"_time": "ds", field: "y"})
+		df['ds'] = df['ds'].dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-	df['ds'] = df['ds'].dt.strftime('%a, %d %b %Y %H:%M:%S GMT')
+		actual_values = df[['ds', 'y']].tail(int(days)).to_json(orient='records', date_format='iso')
+		actual_values = json.loads(actual_values)
 
-	actual_values = df[['ds', 'y']].tail(int(days)).to_json(orient='records', date_format='iso')
-	actual_values = json.loads(actual_values)
+		m = Prophet()
+		m.fit(df)
 
-	m = Prophet()
-	m.fit(df)
+		future = m.make_future_dataframe(periods=int(days))
+		future.tail()
 
-	future = m.make_future_dataframe(periods=int(days))
-	future.tail()
+		forecast = m.predict(future)
 
-	forecast = m.predict(future)
+		predictions = forecast[['ds', 'yhat']].tail(int(days))
+		predictions_list = predictions.to_dict('records')
 
+		read_client.close()
+		return jsonify({'predictions': predictions_list, 'real': actual_values})
 
-	predictions = forecast[['ds', 'yhat']].tail(int(days))
-	predictions_list = predictions.to_dict('records')
-
-	read_client.close()
-	return jsonify({'predictions': predictions_list, 'real':actual_values})
+	except Exception as e:
+		print(f"Error: {e}")
+		return jsonify({'error': str(e)}), 500
 
 
 @app.route('/addClient', methods=['POST'])
@@ -163,11 +113,22 @@ def addClient():
 	field = request.args.get("field")
 
 	if not url or not org or not bucket or not measurement or not field:
-		return jsonify({"error": "url, org, bucket, measurement and field parameters are required."}), 400
+		return jsonify({"error": "org, url, bucket, measurement and field parameters are required."}), 400
 
 	authToken = binascii.hexlify(os.urandom(20)).decode()
-	newUser = {"url": url, "bucket": bucket, "measurement": measurement, "field": field, "authToken": authToken}
-	Users[org] = newUser
+
+	conn = get_db()
+	cursor = conn.cursor()
+
+	try:
+		cursor.execute('''INSERT INTO orgs (org, url, bucket, measurement, field, authToken)
+							VALUES (?, ?, ?, ?, ?, ?)''', (org, url, bucket, measurement, field, authToken))
+		conn.commit()
+	except sqlite3.IntegrityError as e:
+		conn.rollback()
+		return jsonify({"error": str(e)}), 500
+	finally:
+		conn.close()
 
 	return jsonify({"message": "User added successfully", "authToken":authToken}), 200
 
@@ -184,20 +145,40 @@ def updateClient():
 	if not org or not authToken:
 		return jsonify({"error": "org and authToken parameters are required."}), 400
 	
-	if not Users.get(org):
-		return jsonify({'error': 'organization not found'}), 404
+	conn = get_db()
+	cursor = conn.cursor()
+
+	cursor.execute('SELECT * FROM orgs WHERE org = ? AND authToken = ?', (org, authToken))
+	client = cursor.fetchone()
+
+	if client is None:
+		return jsonify({'error': 'organization not found or authentication failed'}), 404
 	
-	if Users[org]['authToken'] is not authToken:
-		return jsonify({'error': 'authentication failed'}), 403
-	
+	update_fields = []
+	update_values = []
+
 	if url:
-		Users[org]['url'] = url
+		update_fields.append('url = ?')
+		update_values.append(url)
 	if bucket:
-		Users[org]['bucket'] = bucket
+		update_fields.append('bucket = ?')
+		update_values.append(bucket)
 	if measurement:
-		Users[org]['measurement'] = measurement
+		update_fields.append('measurement = ?')
+		update_values.append(measurement)
 	if field:
-		Users[org]['field'] = field
+		update_fields.append('field = ?')
+		update_values.append(field)
+
+	update_values.append(org)
+	update_values.append(authToken)
+
+	if update_fields:
+		update_query = f'UPDATE orgs SET {", ".join(update_fields)} WHERE org = ? AND authToken = ?'
+		cursor.execute(update_query, update_values)
+		conn.commit()
+
+	conn.close()
 
 	return jsonify({"message": "User updated successfully"}), 200
 
@@ -209,83 +190,99 @@ def updateData():
 	authToken = request.args.get("authToken")
 	token = request.args.get('token')
 
-	if not org or not token or not authToken:
-		return jsonify({'error': 'org, token and authToken parameters are required'}), 400
+	if not org or not authToken:
+		return jsonify({"error": "org and authToken parameters are required."}), 400
+
+	conn = get_db()
+	cursor = conn.cursor()
+
+	cursor.execute('SELECT * FROM orgs WHERE org = ? AND authToken = ?', (org, authToken))
+	client = cursor.fetchone()
+
+	if client is None:
+		return jsonify({'error': 'organization not found or authentication failed'}), 404
 	
-	if not Users.get(org):
-		return jsonify({'error': 'organization not found'}), 404
+	url = client[1]
+	bucket = client[2]
+	measurement = client[3]
+	field = client[4]
+
+	try:
+		client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
+
+		buckets_api = client.buckets_api()
+		if not buckets_api.find_bucket_by_name(bucket):
+			buckets_api.create_bucket(bucket_name=bucket, org=org)
+
+		query_api = client.query_api()
+
+		# Flux query to fetch the last timestamp from the specified measurement
+		query =f'''
+				from(bucket: "{bucket}")
+					|> range(start: -1y)
+					|> filter(fn: (r) => r._measurement == "{measurement}")
+					|> last()
+					|> keep(columns: ["_time"])
+				'''
+		
+		date_obj = None	
+		result = query_api.query(org=org, query=query)
+		for table in result:
+				for record in table.records:
+					datetime_obj = record.get_time()
+					if datetime_obj:
+						date_obj = datetime_obj.date()
+
+		if not date_obj:
+			date_obj = datetime(2017,1,1).date()
+
+		URL = "https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD"
+
+		dataIni = date_obj.strftime('%Y-%m-%d')
+		dataFim = datetime.today().date()
+		nDias = date_obj - dataFim
+
+		PARAMS = {'idsTiposComb':'3201', 'dataIni':dataIni, 'dataFim':dataFim,'qtdPorPagina':nDias,'pagina':'1', 'orderAsc':'1'}
+		
+		page = requests.get(url=URL,params=PARAMS)
+
+		results = page.json()
+
+		write_api = client.write_api(write_options=SYNCHRONOUS)
+		points = []
+		for dia in results['resultado']:
+			number = float(dia['PrecoMedio'][:-2].replace(',', '.'))
+			point = Point(measurement)\
+				.field(field, number)\
+				.time(dia['Data'], WritePrecision.NS)
+			points.append(point)
+
+		write_api.write(bucket=bucket, org=org, record=points)
+		client.close()
+
+		return jsonify({"message": "result"}), 200
+
+	except Exception as e:
+		print(f"Error: {e}")
+		return jsonify({'error': str(e)}), 500
 	
-	if Users[org]['authToken'] is not authToken:
-		return jsonify({'error': 'authentication failed'}), 403
-	
-	url= Users[org]["url"]
-	bucket = Users[org]["bucket"]
-	measurement = Users[org]["measurement"]
-	field = Users[org]["field"]
-
-	client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
-
-	buckets_api = client.buckets_api()
-	if not buckets_api.find_bucket_by_name(bucket):
-		buckets_api.create_bucket(bucket_name=bucket, org=org)
-
-	query_api = client.query_api()
-
-	# Flux query to fetch the last timestamp from the specified measurement
-	query =f'''
-			from(bucket: "{bucket}")
-				|> range(start: -1y)
-				|> filter(fn: (r) => r._measurement == "{measurement}")
-				|> last()
-				|> keep(columns: ["_time"])
-			'''
-	
-	date_obj = None	
-	result = query_api.query(org=org, query=query)
-	for table in result:
-			for record in table.records:
-				datetime_obj = record.get_time()
-				if datetime_obj:
-					date_obj = datetime_obj.date()
-
-	if not date_obj:
-		date_obj = datetime(2017,1,1).date()
-
-	URL = "https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD"
-
-	dataIni = date_obj.strftime('%Y-%m-%d')
-	dataFim = datetime.today().date()
-	nDias = date_obj - dataFim
-
-	PARAMS = {'idsTiposComb':'3201', 'dataIni':dataIni, 'dataFim':dataFim,'qtdPorPagina':nDias,'pagina':'1', 'orderAsc':'1'}
-	
-	page = requests.get(url=URL,params=PARAMS)
-
-	results = page.json()
-
-	write_api = client.write_api(write_options=SYNCHRONOUS)
-	points = []
-	for dia in results['resultado']:
-		number = float(dia['PrecoMedio'][:-2].replace(',', '.'))
-		point = Point(measurement)\
-			.field(field, number)\
-			.time(dia['Data'], WritePrecision.NS)
-		points.append(point)
-
-	write_api.write(bucket=bucket, org=org, record=points)
-	client.close()
-
-	return jsonify({"message": "result"}), 200
-
+@app.route('/resetDB', methods=['GET'])
+def resetDB():
+	try:
+		conn = get_db()
+		cursor = conn.cursor()
+		cursor.execute('DROP TABLE IF EXISTS orgs')
+		create_table()
+		conn.commit()
+		conn.close()
+		return jsonify({"message": "Database reset successfully"}), 200
+	except Exception as e:
+		print(f"Error resetting database: {e}")
+		return jsonify({"error": str(e)}), 500
 
 
 # internal function
-def updateData(org,token):
-
-	url= Users[org]["url"]
-	bucket = Users[org]["bucket"]
-	measurement = Users[org]["measurement"]
-	field = Users[org]["field"]
+def updateData(org, token, url, bucket, measurement, field):
 
 	client = InfluxDBClient(url=url, token=token, org=org, timeout=60000)
 
@@ -341,4 +338,5 @@ def updateData(org,token):
 
 
 if __name__ == '__main__':
+	create_table()
 	app.run(debug=True)

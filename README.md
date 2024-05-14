@@ -8,7 +8,7 @@ docker compose up -d
 
 The first step is to register the client in the service with /addClient, using the
 - name of the organization, 
-- influxdb url, 
+- influxdb url (if using the influxDB from this docker-compose: http://influxdb:8086), 
 - name of the target bucket, 
 - measurement name,
 - field name,
@@ -19,7 +19,7 @@ like this:
 http://localhost:5000/addClient?org=OrgName&url=Url&bucket=bucket&measurement=measurement&field=field
 ```
 
-this will return a authentication token that is required for any other operation, these fields can be updated later with /updateClient, using the organization name and the authentication token, all other parameters are optional
+this will return a authentication token that is required for any other operation, these fields can be updated later with /updateClient, using the organization name and the authentication token, when updating all other parameters are optional
 
 ```bash
 http://localhost:5000/updateClient?org=OrgName&authToken=authToken
@@ -30,7 +30,7 @@ Predictions are calculated by calling /predict with a
 - organization name, 
 - authToken, 
 - token,
-- optionally a number os days(default 15) 
+- optionally a number of days(default 15) 
 
 like this:
 
@@ -72,33 +72,3 @@ localhost:5000/updateData?org=orgName&authToken=authToken&token=your_token_here
 ```
 
 This is will use the API https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD, to fetch fuel prices.
-
-
-Old method of calling predictions:
-
-    Currently access to influxdb is defined through the enviroment variables in docker-compose, if those change in the influxdb service they need to change here too. If the influxdb is not running in docker then the INFLUXDB_URL needs to be changed 
-    
-    from 
-
-    localhost:8086
-    
-    to 
-    
-    host.docker.internal:8086
-    
-
-
-    Predictions are calculated by calling /old/predict with a bucket, measurement and field like this:
-
-    localhost:5000/old/predict?bucket=bucketName&measurement=measurementName&field=fieldName
-
-    this will query the db and calculate prediction values for the next 15 days, those are returned like this:
-
-    {
-        "predictions": [
-            {
-                "ds": "Wed, 03 Apr 2024 00:00:00 GMT",
-                "yhat": 1.7213467119261394
-            }
-        ]
-    }
