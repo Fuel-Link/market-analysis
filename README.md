@@ -16,13 +16,13 @@ The first step is to register the client in the service with /addClient, using t
 like this:
 
 ```bash
-http://localhost:5000/addClient?org=OrgName&url=Url&bucket=bucket&measurement=measurement&field=field
+curl -X POST "http://localhost:5000/addClient?org=OrgName&url=http://influxdb:8086&bucket=bucketName&measurement=measurementName&field=fieldName"
 ```
 
 this will return a authentication token that is required for any other operation, these fields can be updated later with /updateClient, using the organization name and the authentication token, when updating all other parameters are optional
 
 ```bash
-http://localhost:5000/updateClient?org=OrgName&authToken=authToken
+curl -X PUT "http://localhost:5000/updateClient?org=OrgName&authToken=yourAuthToken&url=newUrl&bucket=newBucket&measurement=newMeasurement&field=newField"
 ```
 
 
@@ -35,7 +35,12 @@ Predictions are calculated by calling /predict with a
 like this:
 
 ```bash
-localhost:5000/predict?org=orgName&authToken=authToken&token=your_token_here&days=7
+curl -G "http://localhost:5000/predict" \
+     --data-urlencode "org=OrgName" \
+     --data-urlencode "authToken=yourAuthToken" \
+     --data-urlencode "token=yourInfluxDBToken" \
+     --data-urlencode "days=7"
+
 ```
 
 this will query the db and calculate prediction values for the next days, those are returned like this aswell as the real values in the db:
@@ -68,7 +73,7 @@ The database can be updated by calling /updateData with the
 like this:
 
 ```bash
-localhost:5000/updateData?org=orgName&authToken=authToken&token=your_token_here
+curl -X PUT "http://localhost:5000/updateData?org=OrgName&authToken=yourAuthToken&token=yourInfluxDBToken"
 ```
 
 This is will use the API https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD, to fetch fuel prices.
