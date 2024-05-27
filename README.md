@@ -77,3 +77,30 @@ curl -X PUT "http://localhost:5000/updateData?org=OrgName&authToken=yourAuthToke
 ```
 
 This is will use the API https://precoscombustiveis.dgeg.gov.pt/api/PrecoComb/PMD, to fetch fuel prices.
+
+
+The following endpoint will keep track of fuel consumption so that future use can be estimated.
+
+```bash
+curl -X POST "http://localhost:5001/usePump" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "pump_id": 2,
+           "amount": 50.0,
+	       "client "user123",
+           "org": "Fuel-Link"
+         }'
+```
+
+
+The following endpoint will keep track of when a pump is restocked.
+
+```bash
+curl -X POST "http://localhost:5001/restockFuel" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "pump_id": 1,
+           "amount": 500.0,
+           "org": "Fuel-Link"
+         }'
+```
