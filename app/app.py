@@ -30,23 +30,6 @@ def create_table():
 						field TEXT NOT NULL,
 						authToken TEXT UNIQUE NOT NULL
 					)''')
-	cursor.execute('''CREATE TABLE IF NOT EXISTS fuel_usage (
-						id INTEGER PRIMARY KEY AUTOINCREMENT,
-						pump_id INTEGER NOT NULL,
-						amount REAL NOT NULL,
-						client TEXT NOT NULL,
-						timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-						org TEXT NOT NULL,
-						FOREIGN KEY (org) REFERENCES orgs(org)
-					)''')
-	cursor.execute('''CREATE TABLE IF NOT EXISTS fuel_restock (
-						id INTEGER PRIMARY KEY AUTOINCREMENT,
-						pump_id INTEGER NOT NULL,
-						amount REAL NOT NULL,
-						timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-						org TEXT NOT NULL,
-						FOREIGN KEY (org) REFERENCES orgs(org)
-					)''')
 	conn.commit()
 	conn.close()
 
@@ -292,7 +275,8 @@ def resetDB():
 	try:
 		conn = get_db()
 		cursor = conn.cursor()
-		cursor.execute('DROP TABLE IF EXISTS orgs')
+		cursor.execute('DROP TABLE IF EXISTS fuel_usage')
+		cursor.execute('DROP TABLE IF EXISTS fuel_restock')
 		create_table()
 		conn.commit()
 		conn.close()
@@ -303,33 +287,35 @@ def resetDB():
 
 @app.route('/usePump', methods=['POST'])
 def use_pump():
-	pump_id = request.args.get('pump_id')
-	amount = request.args.get('amount')
-	client = request.args.get('client')
-	org = request.args.get('org')
+	data = request.get_json()
+	pump_id = data.get('pump_id')
+	amount = data.get('amount')
+	org = data.get('org')
+	client = data.get('client')
 
 	if not pump_id or amount is None or not client or not org:
-		return jsonify({"error": "pump_id, amount, client and org are required"}), 400
+		return jsonify({"error": "pump_id, amount, client and org are required", "values":(pump_id, amount, client, org)}), 400
 
 	conn = sqlite3.connect(DATABASE)
 	cursor = conn.cursor()
-	cursor.execute('INSERT INTO fuel_usage (pump_id, amount, client, timestamp, org) VALUES (?, ?, ?, ?)', (pump_id, amount, client, datetime.now(), org))
+	cursor.execute('INSERT INTO fuel_usage (pump_id, amount, client, timestamp, org) VALUES (?, ?, ?, ?, ?)', (pump_id, amount, client, datetime.now(), org))
 	conn.commit()
 	conn.close()
 	return jsonify({"message": "Pump usage recorded successfully"}), 200
 
 @app.route('/restockFuel', methods=['POST'])
 def restock_fuel():
-	pump_id = request.args.get('pump_id')
-	amount = request.args.get('amount')
-	org = request.args.get('org')
+	data = request.get_json()
+	pump_id = data.get('pump_id')
+	amount = data.get('amount')
+	org = data.get('org')
 
 	if not pump_id or amount is None or not org:
-		return jsonify({"error": "pump_id, amount and org are required"}), 400
+		return jsonify({"error": "pump_id, amount and org are required", "values":(pump_id, amount, org)}), 400
 
 	conn = sqlite3.connect(DATABASE)
 	cursor = conn.cursor()
-	cursor.execute('INSERT INTO fuel_restock (pump_id, amount, timestamp, org) VALUES (?, ?, ?)', (pump_id, amount, datetime.now(), org))
+	cursor.execute('INSERT INTO fuel_restock (pump_id, amount, timestamp, org) VALUES (?, ?, ?, ?)', (pump_id, amount, datetime.now(), org))
 	conn.commit()
 	conn.close()
 	return jsonify({"message": "Fuel restocked successfully"}), 200
